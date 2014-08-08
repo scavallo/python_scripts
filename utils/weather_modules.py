@@ -6,6 +6,7 @@ from pstats import *
 from numpy import trapz
 from mstats import *
 
+
 Cp = 1004.5;
 Cv = 717.5;
 Rd = 287.04;
@@ -103,7 +104,7 @@ def total_col(infld, pres, temp, hght):
     ''' infld:  Input 3D field to column integrate  '''
     ''' hght:  Input 3D geopotential height field (m)  '''
     ''' temp:  Input 3D temperature field (K)  '''
-    ''' pres: Input air pressure (Pa)'''
+    ''' pres: Input 3D air pressure (Pa)'''
     ''' '''
     ''' tcol: Output total column integrated value '''
     
@@ -129,6 +130,16 @@ def thetae(thta, temp, esat):
     ''' thetae: Output equivalent potential temperature (K)'''
     thout = thta * np.exp( (L * esat) / (Cp * temp) )
     return thout
+
+def w_to_omega(w,pres,tempk):
+    ''' Compute vertical velocity on isobaric surfaces '''
+    ''' '''
+    ''' w:   Input vertical velocity (m s-1) '''
+    ''' pres:   Input half level pressures (full field) in Pa '''
+    ''' tempk:   Input temperature (K) '''
+
+    omeg = -((pres*g) / (Rd*tempk)) * w
+    return omeg
 
 def calc_gradient(fldin, dx, dy, dz):
     '''
@@ -1223,7 +1234,19 @@ def spatial_anomaly(varin,slice_option):
     varanom_std = tmp/tmp_std
     
     return varanom, varanom_std
-    
+
+def rmse(predictions, targets):    
+    comp = np.sqrt(((predictions - targets) ** 2))
+    return np.mean(np.ma.MaskedArray(comp, np.isnan(comp))) 
+
+def bias(predictions, targets):    
+    comp = predictions - targets
+    return np.mean(np.ma.MaskedArray(comp, np.isnan(comp))) 
+
+def relative_error(predictions, targets):    
+    comp = ((predictions - targets)/targets) * 100
+    return np.mean(np.ma.MaskedArray(comp, np.isnan(comp))) 
+
 def find_amplitude(datain,dataininds,thresh,min_or_max):
     """
 

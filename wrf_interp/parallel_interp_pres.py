@@ -412,24 +412,33 @@ H_DIABATIC_in = infile.variables['H_DIABATIC'][:]
 T_TEND_PHYSICS_in = T_TENDF_in + H_DIABATIC_in
 T_TEND_DYNAMICS_in = T_TEND_SMALL_in + T_TEND_LARGE_in
 
+gc.collect()
 # Unaccounted for tendency
 RTHMIX_in = T_TEND_PHYSICS_in - (RTHRATEN_in + RTHCUTEN_in + RTHBLTEN_in + H_DIABATIC_in)
 gc.collect()
 ## convert from PVU/s to PVU/day by * 86400
+print 'PVRATEN'
 PVRATEN_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHRATEN_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVRATLW'
 PVRATLW_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHRATLW_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVRATSW'
 PVRATSW_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHRATSW_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVCOND'
 PVCOND_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], H_DIABATIC_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVBLTEN'
 PVBLTEN_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHBLTEN_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVCUTEN'
 PVCUTEN_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHCUTEN_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVDIAB'
 PVDIAB_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], T_TEND_PHYSICS_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
+print 'PVMIX'
 PVMIX_in = wrf_pv( U_in, V_in, infile.variables['F'][0][:], RTHMIX_in, PRES_in, infile.variables['MAPFAC_M'][0][:], dx ) * 86400
 gc.collect()
 
@@ -437,18 +446,17 @@ gc.collect()
 #PV_DIAB_in = PVRATEN_in + PVCOND_in + PVBLTEN_in + PVCUTEN_in
 print 'All done!'
 infile.close()
-names = [ 'HEIGHT', 'PRES', 'THETA', 'TEMP', 'QVAPOR', 'QCLOUD', 'QICE', 'QRAIN', 'QSNOW', 'ABSVORT', 'PV', 'RELH', 'U', 'V', 'W', 
-         'T_TEND_DYNAMICS', 'T_TEND_PHYSICS','T_TEND_SMALL', 'T_TEND_LARGE']
-grids = [ HGHT_in, PRES_in, THETA_in, TEMP_in, QVAPOR_in, QCLOUD_in, QICE_in, QRAIN_in, QSNOW_in, ABSVORT_in, PV_in, RH_in, U_in, V_in, W_in,
-         T_TEND_DYNAMICS_in, T_TEND_PHYSICS_in, T_TEND_SMALL_in, T_TEND_LARGE_in]
+names = [ 'HEIGHT', 'PRES', 'THETA', 'TEMP', 'QVAPOR', 'QCLOUD', 'QICE', 'QRAIN', 'QSNOW', 'U', 'V', 'W']
+grids = [ HGHT_in, PRES_in, THETA_in, TEMP_in, QVAPOR_in, QCLOUD_in, QICE_in, QRAIN_in, QSNOW_in, U_in, V_in, W_in]
 surface=PRES_in
 
+names2 = [ 'ABSVORT', 'PV', 'RELH', 'T_TEND_DYNAMICS', 'T_TEND_PHYSICS','T_TEND_SMALL', 'T_TEND_LARGE','RTHRATEN', 'RTHRATLW', 'RTHRATSW']
+grids2 = [ ABSVORT_in, PV_in, RH_in, T_TEND_DYNAMICS_in, T_TEND_PHYSICS_in, T_TEND_SMALL_in, T_TEND_LARGE_in, RTHRATEN_in, RTHRATLW_in, RTHRATSW_in]
 
-names2 = ['RTHRATEN', 'RTHRATLW', 'RTHRATSW', 
-          'RTHBLTEN', 'RTHCUTEN', 'H_DIABATIC', 'RTHMIX','PVDIAB', 
+
+names3 = ['RTHBLTEN', 'RTHCUTEN', 'H_DIABATIC', 'RTHMIX','PVDIAB', 
 	  'PVRATEN', 'PVRATLW', 'PVRATSW', 'PVCOND', 'PVBLTEN','PVCUTEN','PVMIX']
-grids2 = [ RTHRATEN_in, RTHRATLW_in, RTHRATSW_in, 
-           RTHBLTEN_in, RTHCUTEN_in, H_DIABATIC_in, RTHMIX_in, PVDIAB_in,
+grids3 = [ RTHBLTEN_in, RTHCUTEN_in, H_DIABATIC_in, RTHMIX_in, PVDIAB_in,
 	   PVRATEN_in, PVRATLW_in, PVRATSW_in, PVCOND_in, PVBLTEN_in, PVCUTEN_in, PVMIX_in ]
 
 
@@ -484,7 +492,7 @@ for name in names:
     grid[:] = data[ count ][:]
     count += 1 
 
-del data, HGHT_in, PRES_in, THETA_in, TEMP_in, QVAPOR_in, QCLOUD_in, QICE_in, QRAIN_in, QSNOW_in, ABSVORT_in, PV_in, RH_in, U_in, V_in, W_in, T_TEND_DYNAMICS_in, T_TEND_PHYSICS_in, T_TEND_SMALL_in, T_TEND_LARGE_in 
+del data, HGHT_in, PRES_in, THETA_in, TEMP_in, QVAPOR_in, QCLOUD_in, QICE_in, QRAIN_in, QSNOW_in, U_in, V_in, W_in
 gc.collect()
 
 start_time = datetime.datetime.now()
@@ -504,8 +512,25 @@ for name in names2:
     grid = outfile.createVariable( name, 'f4', ('time', 'bottom_top', 'south_north', 'west_east') )
     grid[:] = data2[ count ][:]
     count += 1     
-outfile.close()
 
+del data2, ABSVORT_in, PV_in, RH_in, T_TEND_DYNAMICS_in, T_TEND_PHYSICS_in, T_TEND_SMALL_in, T_TEND_LARGE_in, RTHRATEN_in, RTHRATLW_in, RTHRATSW_in
+
+gc.collect()
+start_time = datetime.datetime.now()
+print "Starting third round of interpolation..."
+data3 = map( func, grids3 )
+end_time = datetime.datetime.now()
+secs = end_time - start_time
+print 'interpolation took', secs
+
+
+count = 0
+for name in names3:
+    print 'Writing ', name
+    grid = outfile.createVariable( name, 'f4', ('time', 'bottom_top', 'south_north', 'west_east') )
+    grid[:] = data3[ count ][:]
+    count += 1     
+outfile.close()
 
 with open(fname_done, 'a'):
     os.utime(fname_done, None)

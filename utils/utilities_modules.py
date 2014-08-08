@@ -369,6 +369,37 @@ def destagger_hor_wind(ustag,vstag):
         	v[kk,jj,ii] = (vstag[kk,jj+1,ii] + ustag[kk,jj,ii])/2   
 
    return u,v
+def destagger_vertical(varin):
+   """
+   varout = destagger_hor_wind(varin)
+
+   destaggers in the vertical
+
+   Steven Cavallo
+   June 2014
+
+   """
+   
+   nshape = np.shape(varin)
+   nel = len(nshape)   
+   if nel == 4:
+      Nt,Nz,Ny,Nx = np.shape(varin)         
+      
+      varout = np.zeros((Nt,Nz-1,Ny,Nx))      
+      
+      for kk in range(0,Nz-1):         	 	     
+          varout[:,kk,:,:] = (varin[:,kk+1,:,:] + varin[:,kk,:,:])/2
+   
+   else:
+      Nz,Ny,Nx = np.shape(varin)   
+       
+      varout = np.zeros((Nz-1,Ny,Nx))
+      for kk in range(0,Nz-1):	             	 		
+          varout[kk,:,:] = (varin[kk+1,:,:] + varin[kk,:,:])/2
+
+
+
+   return varout 
 def grid_to_true_wind(lon,ug,vg,truelat1,truelat2,stdlon,proj_type):
     """
 
@@ -428,7 +459,7 @@ def grid_to_true_wind(lon,ug,vg,truelat1,truelat2,stdlon,proj_type):
 def xsection_inds(slon, slat, elon, elat, lons, lats, m):
     '''
     Returns the indicies for creating a cross section.
-    Note: The indices returned are generall south-to-north
+    Note: The indices returned are generally south-to-north
 
     Parameters
     ----------
@@ -699,4 +730,13 @@ def driver_xsec(lat, lon, cenLat, cenLon, dLat, dLon):
   
   return (cellsOnLine_lat, cellsOnLine_lon)
 
+def bold_labels(ax,fontsize=None):
+    if fontsize is None:
+        fontsize = 14
+    for tick in ax.xaxis.get_major_ticks():
+        tick.label1.set_fontsize(fontsize)
+        tick.label1.set_fontweight('bold')
+    for tick in ax.yaxis.get_major_ticks():
+        tick.label1.set_fontsize(fontsize)
+        tick.label1.set_fontweight('bold')
   
