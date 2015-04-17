@@ -5,7 +5,7 @@ from scipy import ndimage
 from pstats import *
 from numpy import trapz
 from mstats import *
-
+import os, datetime
 
 Cp = 1004.5;
 Cv = 717.5;
@@ -14,6 +14,7 @@ Rv = 461.6;
 RvRd = Rv / Rd;
 g = 9.81;
 L = 2.50e6;
+Lf = 3.34*10**5;
 Talt = 288.1500;
 Tfrez = 273.1500;
 To = 300;
@@ -87,6 +88,20 @@ def claus_clap(temp):
     ''' esat: Output satuation vapor pressure (Pa)'''
     esat = (eo * np.exp( (L / Rv) * ( 1/Tfrez - 1/temp) ) ) * 100
     return esat
+
+def claus_clap_ice(temp):
+    ''' Compute saturation vapor pressure over ice '''
+    ''' '''
+    ''' es:  Input satuation vapor pressure of liquid (Pa)'''    
+    ''' temp: Input temperature (K) '''
+    ''' esi: Output satuation vapor pressure of ice (Pa)'''
+
+    a = 273.16 / temp
+    exponent = -9.09718 * (a - 1.) - 3.56654 * np.log10(a) + 0.876793 * (1. - 1./a) + np.log10(6.1071)
+    esi = 10**exponent
+    esi = esi*100
+    
+    return esi
 
 def satur_mix_ratio(es, pres):
     ''' Compute saturation mixing ratio '''
@@ -406,7 +421,7 @@ def gradient_sphere(f, *varargs):
     argsin = list(varargs)
 
     if N != n:
-       raise SyntaxError("dimensions of input array must match the number of remaining argumens")
+       raise SyntaxError("dimensions of input array must match the number of remaining arguments")
 
     df = np.gradient(f)
 
@@ -776,7 +791,7 @@ The horizontal convergence
 
 def geostrophic_latlon(u, v, ghgt, lats, lons):
     '''
-Calculate horizontal advection on a latitude/longitude grid
+Calculate geostrophic wind on a latitude/longitude grid
 
 Input:
    
@@ -816,7 +831,39 @@ Output:
     vg = dphidx/f
     
     return ug, vg
+    
+def geostrophic_cartesian(u, v, ghgt, lats, dy, dx):
+    '''
+Calculate geostrophic wind on a latitude/longitude grid
 
+Input:
+   
+   u,v : 2 dimensional u and v wind arrays 
+         corresponding to the x and y 
+	 components of the wind, respectively.
+			     
+   ghgt: 2 dimensional array of geopotential height
+   
+   lats : latitude array
+
+Output:
+
+   ug,vg : 2 dimensional geostrophic u and v 
+           wind arrays corresponding to the x and y 
+	   components of the geostrophic wind, respectively.
+'''
+
+    # Coriolis parameter
+    f = 2*(7.292e-05)*np.sin(np.deg2rad(lats))    
+    ghgt = ndimage.gaussian_filter(ghgt,0.75)
+    
+    geop = ghgt * 9.81
+    dummy,dphidy,dphidx = gradient_cartesian(geop, geop[:,0,0], dy, dx)
+    
+    ug = -dphidy/f
+    vg = dphidx/f    
+    
+    return ug, vg
 def hadvection_cartesian(datain, u, v, deltax, deltay):
     '''
 Calculate the vertical vorticity on a Cartesian grid
@@ -834,8 +881,14 @@ Output:
    dataout(y,x): Two dimensional array with the horizontal
    	 	 advection of datain
 '''
-    datady,datadx = gradient_cartesian(datain, deltax, deltay)
-        
+    sh = np.shape(datain)
+    n = len(sh)
+    
+    if n == 2:
+        datady,datadx = gradient_cartesian(datain, deltay, deltax)
+    else:
+        datadz,datady,datadx = gradient_cartesian(datain, datain[:,0,0], deltay, deltax)        
+    
     dataout = -u*datadx -v*datady
     
     return dataout
@@ -926,8 +979,8 @@ Output:
 
    vert_vort(y,x): Two dimensional array of vertical voriticity
 '''
-    dudy,dudx = gradient_cartesian(u, deltax, deltay)
-    dvdy,dvdx = gradient_cartesian(v, deltax, deltay)
+    dudy,dudx = gradient_cartesian(u, deltay, deltax)
+    dvdy,dvdx = gradient_cartesian(v, deltay, deltax)
         
     iy, ix = u.shape
     
@@ -942,6 +995,36 @@ Output:
     vert_vort = zeta + f  
 
     return vert_vort
+
+def thermal_wind_cartesian(thickness_in, lats, deltax, deltay):
+    
+    '''Calculate the thermal wind on a cartesian grid
+
+    Input: thickness_in(deltax, deltay) : 2 dimensional geopotential height thickness array
+    deltax     : horizontal x grid spacing in meters
+    deltay     : horiztional y grid spacing in meters
+    lats       : 2D latitude array used for calculating coriolis parameter
+    Output: thermal_wind_u(lats,lons), thermal_wind_v(lats,lons): Two dimensional arryas of u and v wind
+    '''
+    sh = np.shape(thickness_in)
+    n = len(sh)
+
+    # Smooth the thicknesses
+    thickness_in = ndimage.gaussian_filter(thickness_in,0.75)
+
+    if n == 2:    
+        dthickdy,dthickdx = gradient_cartesian(thickness_in, deltay, deltax)
+    else:         
+        dthickdz,dthickdy,dthickdx = gradient_cartesian(thickness_in, thickness_in[:,0,0], deltay, deltax)    
+	
+    #Calculate the Coriolis parameter
+
+    f = 2*(7.292e-05)*np.sin(np.deg2rad(lats)) 
+
+    thermal_wind_u = -(9.81/f)*dthickdy
+    thermal_wind_v = (9.81/f)*dthickdx
+
+    return thermal_wind_u, thermal_wind_v
 
 def thermal_wind_sphere(thickness_in, lats, lons):
     '''
@@ -1125,9 +1208,9 @@ def epv_cartesian(theta,pres,u,v,lats,deltax,deltay):
     """
     iz, iy, ix = theta.shape
     
-    dthdp, dthdy, dthdx = gradient_cartesian(theta, pres, deltax, deltay)
-    dudp, dudy, dudx = gradient_cartesian(u, pres, deltax, deltay)
-    dvdp, dvdy, dvdx = gradient_cartesian(v, pres, deltax, deltay)
+    dthdp, dthdy, dthdx = gradient_cartesian(theta, pres, deltay, deltax)
+    dudp, dudy, dudx = gradient_cartesian(u, pres, deltay, deltax)
+    dvdp, dvdy, dvdx = gradient_cartesian(v, pres, deltay, deltax)
 
     avort = np.zeros_like(theta).astype('f')   
     for kk in range(0,iz):       
@@ -1375,3 +1458,73 @@ def find_amplitude(datain,dataininds,thresh,min_or_max):
     #ampout = np.median(amps)
     
     return ampout
+
+def readsounding(fname):
+    """
+
+    Reads a sounding text file from the University of Wyoming web page
+
+    Useage example:    
+
+    data,fieldnames = readsounding(wyoming_sounding_textfile)
+    print fieldnames
+
+    pres=data["pres"]
+    temp=data["temp"]
+    dwpt=data["dwpt"]
+    hght=data["hght"]
+    theta=data["thta"]
+    thetae=data["thte"]
+    mixr=data["mixr"]
+    thetav=data["thtv"]
+
+    Steven Cavallo
+    September 2014
+    University of Oklahoma
+    
+    """
+    
+    data={}
+    fieldnames={}
+
+    fid=open(fname)
+    lines=fid.readlines()
+    nlines=len(lines)
+    ndata=nlines-34
+    output={}
+    fields=lines[3].split()
+    units=lines[4].split()
+    # First line for WRF profiles differs from the UWYO soundings
+    header=lines[0]
+    if header[:5]=='00000':
+	# WRF profile
+	data['StationNumber']='-99999'
+	data['Longitude']=float(header.split()[5].strip(","))
+	data['Latitude']=float(header.split()[6])
+	data['SoundingDate']=header.split()[-1]
+    else:
+	data['StationNumber']=header[:5]
+	dstr=(' ').join(header.split()[-4:])
+	data['SoundingDate']=datetime.datetime.strptime(dstr,"%HZ %d %b %Y").strftime("%Y-%m-%d_%H:%M:%S")
+    for ff in fields:
+	output[ff.lower()]=np.zeros((nlines-34))-999.
+    lhi=[1, 9,16,23,30,37,46,53,58,65,72]
+    rhi=[7,14,21,28,35,42,49,56,63,70,77]
+    lcounter=5
+    for line,idx in zip(lines[6:],range(ndata)):
+	lcounter+=1
+	try: output[fields[0].lower()][idx]=float(line[lhi[0]:rhi[0]])
+	except ValueError: break
+	for ii in range(1,len(rhi)):
+	    try:
+	        # Debug only:
+	        # print fields[ii].lower(), float(line[lhi[ii]:rhi[ii]].strip())
+	        output[fields[ii].lower()][idx]=float(line[lhi[ii]:rhi[ii]].strip())
+	    except ValueError:
+	        pass
+    for field in fields:        
+        ff=field.lower()
+        data[ff]=np.ma.masked_values(output[ff],-999.)
+	fieldnames[ff] = field
+    
+    return data, fieldnames

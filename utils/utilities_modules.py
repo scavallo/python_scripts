@@ -4,6 +4,7 @@ import numpy as np
 #import matplotlib.pyplot as mpl
 import matplotlib as plt
 from mpl_toolkits.basemap import Basemap, addcyclic 
+import math
 
 def nan2zero(data):
     ''' Convert NaNs to zero '''
@@ -302,23 +303,34 @@ def earth_distm(lat1,lon1,lat2,lon2):
     
     latshape = np.shape(lat2)
     latsize = np.size(lat2)
+    ndims = len(latshape)
     
     R_earth = 6371200
     R_earth = R_earth / 1000
     pid = np.pi/180
 
-    if latsize > 1:
-       [iy,ix] = np.shape(lat2)
-       
-       X = np.zeros_like(lat2).astype('f')   
-       Y = np.zeros_like(lon2).astype('f')   
-       for ii in range(0,ix):
-           for jj in range(0,iy):   
-               X[jj,ii] = lon1
-	       Y[jj,ii] = lat1      
+    if ndims == 1:
+         if lon2 < 0:
+	    lon2 = lon2 + 360
+	 if lon1 < 0:
+	    lon1 = lon1 + 360
+	    
+	 X = lon1
+	 Y = lat1	     
     else:
-       X = lon1
-       Y = lat1   
+
+	if latsize > 1:
+	   [iy,ix] = np.shape(lat2)
+
+	   X = np.zeros_like(lat2).astype('f')   
+	   Y = np.zeros_like(lon2).astype('f')   
+	   for ii in range(0,ix):
+               for jj in range(0,iy):   
+        	   X[jj,ii] = lon1
+		   Y[jj,ii] = lat1      
+	else:
+	   X = lon1
+	   Y = lat1   
     	            
     # calculate distance
     ed = R_earth * np.arccos( np.sin(Y*pid) * np.sin(lat2*pid) + np.cos(Y*pid) * np.cos(lat2*pid) * np.cos((lon2 - X)*pid));
@@ -730,13 +742,178 @@ def driver_xsec(lat, lon, cenLat, cenLon, dLat, dLon):
   
   return (cellsOnLine_lat, cellsOnLine_lon)
 
-def bold_labels(ax,fontsize=None):
-    if fontsize is None:
-        fontsize = 14
-    for tick in ax.xaxis.get_major_ticks():
-        tick.label1.set_fontsize(fontsize)
-        tick.label1.set_fontweight('bold')
-    for tick in ax.yaxis.get_major_ticks():
-        tick.label1.set_fontsize(fontsize)
-        tick.label1.set_fontweight('bold')
-  
+def boundary_buffer(field, npts_x, npts_y):
+    ''' Replace field with NaNs near boundary defined by npts_x and npts_y '''
+    ''' '''
+    ''' '''
+    ''' field: Input data array '''
+    ''' npts_x, npts_y: number of points from boundaries to replace with NaNs '''
+    
+    dimens = np.shape(field)
+    
+    if len(dimens)==2:
+        iy,ix = np.shape(field)
+        field[0:npts_y,:] = float('NaN')
+        field[-(npts_y+1),:] = float('NaN')	
+        field[:,0:npts_x] = float('NaN')
+        field[:,-(npts_x+1)] = float('NaN')		
+	
+    if len(dimens)==3:
+        iz,iy,ix = np.shape(field)    
+        field[:,0:npts_y,:] = float('NaN')
+        field[:,-(npts_y+1),:] = float('NaN')	
+        field[:,:,0:npts_x] = float('NaN')
+        field[:,:,-(npts_x+1)] = float('NaN')		    
+    
+    return field 
+
+def find_matching_indices(a, b):   
+    ''' Find the indices of array a that match the values in array b'''
+    ''' '''
+    ''' a: Input array to match values to '''
+    ''' b: Input array with values that are a subset of array a '''
+    ''' '''
+    ''' Output: minds (indices of a that match b)'''
+    ''' '''
+    ''' Steven Cavallo '''
+    ''' December 2014 '''
+    
+    ab = np.in1d(a.ravel(), b).reshape(a.shape)
+    linds = np.where(ab)
+
+    return linds
+def date_to_jd(year,month,day):
+    """
+    Convert a date to Julian Day.
+    Algorithm from 'Practical Astronomy with your Calculator or Spreadsheet',
+    4th ed., Duffet-Smith and Zwart, 2011.
+    Parameters
+    ----------
+    year : int
+    Year as integer. Years preceding 1 A.D. should be 0 or negative.
+    The year before 1 A.D. is 0, 10 B.C. is year -9.
+    month : int
+    Month as integer, Jan = 1, Feb. = 2, etc.
+    day : float
+    Day, may contain fractional part.
+    Returns
+    -------
+    jd : float
+    Julian Day
+    Examples
+    --------
+    Convert 6 a.m., February 17, 1985 to Julian Day
+    >>> date_to_jd(1985,2,17.25)
+    2446113.75
+    """
+    if month == 1 or month == 2:
+	yearp = year - 1
+	monthp = month + 12
+    else:
+	yearp = year
+	monthp = month
+    # this checks where we are in relation to October 15, 1582, the beginning
+    # of the Gregorian calendar.
+    if ((year < 1582) or
+	(year == 1582 and month < 10) or
+	(year == 1582 and month == 10 and day < 15)):
+	# before start of Gregorian calendar
+	B = 0
+    else:
+        # after start of Gregorian calendar
+        A = math.trunc(yearp / 100.)
+        B = 2 - A + math.trunc(A / 4.)
+    if yearp < 0:
+        C = math.trunc((365.25 * yearp) - 0.75)
+    else:
+        C = math.trunc(365.25 * yearp)
+        D = math.trunc(30.6001 * (monthp + 1))
+        jd = B + C + D + day + 1720994.5
+    return jd
+def jd_to_date(jd):
+    """
+    Convert Julian Day to date.
+    Algorithm from 'Practical Astronomy with your Calculator or Spreadsheet',
+    4th ed., Duffet-Smith and Zwart, 2011.
+    Parameters
+    ----------
+    jd : float
+    Julian Day
+    Returns
+    -------
+    year : int
+    Year as integer. Years preceding 1 A.D. should be 0 or negative.
+    The year before 1 A.D. is 0, 10 B.C. is year -9.
+    month : int
+    Month as integer, Jan = 1, Feb. = 2, etc.
+    day : float
+    Day, may contain fractional part.
+    Examples
+    --------
+    Convert Julian Day 2446113.75 to year, month, and day.
+    >>> jd_to_date(2446113.75)
+    (1985, 2, 17.25)
+    """
+    jd = jd + 0.5
+    F, I = math.modf(jd)
+    I = int(I)
+    A = math.trunc((I - 1867216.25)/36524.25)
+    if I > 2299160:
+        B = I + 1 + A - math.trunc(A / 4.)
+    else:
+        B = I
+        C = B + 1524
+        D = math.trunc((C - 122.1) / 365.25)
+        E = math.trunc(365.25 * D)
+        G = math.trunc((C - E) / 30.6001)
+        day = C - E + F - math.trunc(30.6001 * G)
+    if G < 13.5:
+        month = G - 1
+    else:
+        month = G - 13
+    if month > 2.5:
+        year = D - 4716
+    else:
+        year = D - 4715
+    return year, month, day 
+def smooth_onedim(x,npasses):
+    """ data = smooth_onedim(x)
+
+     Uses a 5-point moving average with filter on vector x 
+     with coefficients equal to the reciprocal of the span 
+     to obtain vector dat
+
+     x = input vector
+     npasses = number of smoothing passes
+     
+     Returns vector called data
+     
+     Steven Cavallo
+     January 2015     
+    """
+    
+    if npasses == 0:
+       print 'Number of smoothing passes is set to zero.  Set to a value greater than zero to smooth your data.'
+       data = x
+       return data
+    
+    for tt in xrange(0,npasses):       
+        if tt == 0:
+	    data = np.zeros_like(x).astype('f')
+	    npts = len(x)
+
+	data[0] = x[1]
+	data[1] = (x[0] + x[1] + x[2])/3    
+	for ii in xrange(2,npts-2):	   
+	   data[ii] = (x[ii-2] + x[ii-1] + x[ii] + x[ii+1] + x[ii+2] ) /5
+
+	data[npts-2] = (x[npts-3] + x[npts-2] + x[npts-1])/3
+	data[npts-1] = x[npts-1]
+
+	x = data
+    
+    return data
+    
+
+
+
