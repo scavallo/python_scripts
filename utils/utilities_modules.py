@@ -26,6 +26,26 @@ def nan2zero(data):
  
     return data
 
+def nan2replace(data,replace_value):
+    ''' Convert NaNs to zero '''
+    ''' '''
+    ''' data: Input data array '''
+    dimens = np.shape(data)
+               
+    # Temporarily collapse data array
+    temp = np.reshape(data,np.prod(np.size(data)), 1)       
+    
+    # Find indices with NaNs
+    inds = np.argwhere(np.isnan(temp))    
+    
+    # Replace NaNs with zero
+    temp[inds] = replace_value                 
+    
+    # Turn vector back into array
+    data = np.reshape(temp,dimens,order='F').copy()
+ 
+    return data
+
 def zero2nan(data):
     ''' Convert zeros to Nans '''
     ''' '''
@@ -363,7 +383,7 @@ def destagger_hor_wind(ustag,vstag):
 
       for jj in range(0,Ny):
          for ii in range(0,Nx-1):			
-             v[jj,ii] = (vstag[jj+1,ii] + ustag[jj,ii])/2   
+             v[jj,ii] = (vstag[jj+1,ii] + vstag[jj,ii])/2   
    
    else:
       Nz,Ny,Nx = np.shape(ustag)   
@@ -378,7 +398,7 @@ def destagger_hor_wind(ustag,vstag):
       for kk in range(0,Nz):
 	 for jj in range(0,Ny):
             for ii in range(0,Nx-1):			
-        	v[kk,jj,ii] = (vstag[kk,jj+1,ii] + ustag[kk,jj,ii])/2   
+        	v[kk,jj,ii] = (vstag[kk,jj+1,ii] + vstag[kk,jj,ii])/2   
 
    return u,v
 def destagger_vertical(varin):
@@ -914,6 +934,3 @@ def smooth_onedim(x,npasses):
     
     return data
     
-
-
-
