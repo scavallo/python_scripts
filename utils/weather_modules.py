@@ -269,9 +269,9 @@ def gradient_cartesian(f, *varargs):
     levs = pressure vector
     dy = scalar or array of grid spacing in y direction
     dx = scalar or vector of grid spacing in x direction
-    >>> dfdz, dfdy = gradient_evenspaced(fldin, dy, dx)
-    >>> dfdz, dfdy, dfdx = gradient_evenspaced(fldin, dz, dy, dx)
-    >>> dfdp, dfdy, dfdx = gradient_evenspaced(fldin, levs, dy, dx)
+    >>> dfdz, dfdy = gradient_cartesian(fldin, dy, dx)
+    >>> dfdz, dfdy, dfdx = gradient_cartesian(fldin, dz, dy, dx)
+    >>> dfdp, dfdy, dfdx = gradient_cartesian(fldin, levs, dy, dx)
     """
     N = len(f.shape)  # number of dimensions
     n = len(varargs)
