@@ -16,7 +16,7 @@ g = 9.81;
 L = 2.50e6;
 Lf = 3.34*10**5;
 Talt = 288.1500;
-Tfrez = 273.1500;
+Tfrez = 273.1500
 To = 300;
 Po = 101325;
 Pr = 1000.;
@@ -265,13 +265,18 @@ def gradient_cartesian(f, *varargs):
 
     Examples
     --------
-    temperature = temperature(pressure,y,x)
+    fldin = temperature(pressure,y,x)
     levs = pressure vector
     dy = scalar or array of grid spacing in y direction
     dx = scalar or vector of grid spacing in x direction
     >>> dfdz, dfdy = gradient_cartesian(fldin, dy, dx)
     >>> dfdz, dfdy, dfdx = gradient_cartesian(fldin, dz, dy, dx)
     >>> dfdp, dfdy, dfdx = gradient_cartesian(fldin, levs, dy, dx)
+    
+    
+    Steven Cavallo
+    University of Oklahoma
+    July 2015
     """
     N = len(f.shape)  # number of dimensions
     n = len(varargs)
