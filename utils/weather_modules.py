@@ -1,9 +1,9 @@
-#!/usr/bin/python
+#!/home/scavallo/anaconda2/bin/python
 
 import numpy as np
 from scipy import ndimage
 from pstats import *
-from numpy import trapz
+from numpy import trapz,linspace,logspace,log,log10
 from mstats import *
 import os, datetime
 
@@ -16,7 +16,7 @@ g = 9.81;
 L = 2.50e6;
 Lf = 3.34*10**5;
 Talt = 288.1500;
-Tfrez = 273.1500
+Tfrez = 273.1500;
 To = 300;
 Po = 101325;
 Pr = 1000.;
@@ -86,7 +86,7 @@ def claus_clap(temp):
     ''' '''
     ''' temp: Input temperature (K)  '''
     ''' esat: Output satuation vapor pressure (Pa)'''
-    esat = (eo * np.exp( (L / Rv) * ( 1/Tfrez - 1/temp) ) ) * 100
+    esat = (eo * np.exp( (L / Rv) * ( 1.0/Tfrez - 1/temp) ) ) * 100.
     return esat
 
 def claus_clap_ice(temp):
@@ -103,6 +103,48 @@ def claus_clap_ice(temp):
     
     return esi
 
+def sat_vap(temp):
+    ''' Compute saturation vapor pressure '''
+    ''' '''
+    ''' temp: Input temperature (K)  '''
+    ''' esat: Output satuation vapor pressure (Pa)'''
+    ''' '''
+    ''' Updated from claus_clap(temp) to account for phase automatically '''
+    
+    [iinds] = np.where(temp<273.15)
+    [linds] = np.where(temp>=273.15)
+    esat =  np.zeros_like(temp).astype('f')
+    
+    nice = len(iinds)
+    nliq = len(linds)
+
+    
+    tempc = temp - 273.15    
+    if nliq > 1:
+        esat[linds] = 6.112*np.exp(17.67*tempc[linds]/(tempc[linds]+243.12))*100.
+    else:
+        if nliq > 0:
+            esat = 6.112*np.exp(17.67*tempc/(tempc+243.12))*100.
+    if nice > 1:
+        esat[iinds] = 6.112*np.exp(22.46*tempc[iinds]/(tempc[iinds]+272.62))*100.
+    else:
+        if nice > 0:
+            esat = 6.112*np.exp(22.46*tempc/(tempc+272.62))*100. 
+    #esat = (eo * np.exp( (L / Rv) * ( 1.0/Tfrez - 1/temp) ) ) * 100.
+    return esat
+
+def moist_lapse(ws, temp):
+    ''' Compute moist adiabatic lapse rate '''
+    ''' '''
+    ''' ws:   Input saturation mixing ratio (kg kg-1)  '''
+    ''' temp: Input air temperature (K)'''
+    ''' '''
+    ''' moist_lapse: Output moist adiabatic lapse rate '''
+    
+    moist_lapse = (g/Cp)*((1.0 + L*ws)/(Rd*temp)) / ( 1.0 + (ws*(L**2.0)/(Cp*Rv*temp**2.0)) )
+    return moist_lapse
+
+
 def satur_mix_ratio(es, pres):
     ''' Compute saturation mixing ratio '''
     ''' '''
@@ -113,6 +155,35 @@ def satur_mix_ratio(es, pres):
     
     ws = 0.622 * ( es / (pres - es) )
     return ws
+
+def VirtualTempFromMixR(tempk,mixr):
+    """Virtual Temperature
+
+    INPUTS:
+    tempk: Temperature (K)
+    mixr: Mixing Ratio (kg/kg)
+
+    OUTPUTS:
+    tempv: Virtual temperature (K)
+    """
+
+    return tempk*(1.0+0.6*mixr)
+
+def Latentc(tempk):
+    """Latent heat of condensation (vapourisation)
+
+    INPUTS:
+    tempk (K)
+
+    OUTPUTS:
+    L_w (J/kg)
+
+    SOURCE:
+    http://en.wikipedia.org/wiki/Latent_heat#Latent_heat_for_condensation_of_water
+    """
+    tempc = tempk - 273.15
+    return 1000*(2500.8 - 2.36*tempc + 0.0016*tempc**2 - 0.00006*tempc**3)
+
 def total_col(infld, pres, temp, hght):
     ''' Compute column integrated value of infld '''
     ''' '''
@@ -131,19 +202,131 @@ def total_col(infld, pres, temp, hght):
     coltot = np.zeros_like(tmp).astype('f')
     for jj in range(0,iy):      
        for ii in range(0,ix):              
-	  colnow = infld[:,jj,ii]*density[:,jj,ii]
-	  hghtnow = hght[:,jj,ii].squeeze()
-	  coltot[jj,ii] = trapz(colnow[::-1],hghtnow[::-1])	      
+           colnow = infld[:,jj,ii]*density[:,jj,ii]
+           hghtnow = hght[:,jj,ii].squeeze()
+           coltot[jj,ii] = trapz(colnow[::-1],hghtnow[::-1])          
 
-    return coltot	 
-def thetae(thta, temp, esat):
+    return coltot    
+
+def GammaW(tempk,pres,e=None):
+    """Function to calculate the moist adiabatic lapse rate (deg K/Pa) based
+    on the temperature, pressure, and rh of the environment.
+
+    INPUTS:
+    tempk (K)
+    pres (Pa)
+    RH (%)
+
+    RETURNS:
+    GammaW: The moist adiabatic lapse rate (Dec K/Pa)
+    """
+    
+    es=sat_vap(tempk)    
+    ws=satur_mix_ratio(es,pres)
+    
+
+    if e is None:
+        # assume saturated
+        e=es
+    
+    w = satur_mix_ratio(e, pres)
+    
+    tempv=VirtualTempFromMixR(tempk,w)
+    latent=Latentc(tempk)
+
+    A=1.0+latent*ws/(Rd*tempk)
+    B=1.0+epsil*latent*latent*ws/(Cp*Rd*tempk*tempk)
+    Rho=pres/(Rd*tempv)
+    Gamma=(A/B)/(Cp*Rho)
+    return Gamma
+
+def dry_parcel_ascent(startpp,starttk,starttdewk,nsteps=101):
+    from numpy import interp
+    #--------------------------------------------------------------------
+    # Lift a parcel dry adiabatically from startp to LCL.
+    #
+    # Inputs:
+    #     startp: Pressure of parcel to lift in Pa
+    #     startt: Temperature of parcel at startp in K
+    #     starttdew: Dewpoint temperature of parcel at startp in K
+    #
+    # Returns:
+    #     presdry, tempdry: pressure (Pa) and temperature (K) along dry adiabatic ascent of parcel 
+    #     tempiso is in K
+    #     T_lcl, P_lcl: Temperature and pressure at LCL
+    #--------------------------------------------------------------------
+
+    assert starttdewk<=starttk
+    
+    
+    startt = starttk - 273.15
+    starttdew = starttdewk - 273.15
+    startp = startpp/100.
+
+    if starttdew==startt:
+        return np.array([startp]),np.array([startt]),np.array([starttdew]),
+
+    #Pres=np.linspace(startp,600)
+    Pres=logspace(log10(startp),log10(600),nsteps)
+    
+    # Lift the dry parcel    
+    T_dry=((starttk)*(Pres/startp)**(Rd/Cp))-273.15    
+
+    # Mixing ratio isopleth  
+    starte= sat_vap(starttdewk)  
+    startw = satur_mix_ratio(starte, startpp)    
+    #if starttdew < 0:
+    #    starte = 6.112*np.exp(22.46*startt/(startt+272.62))*100.
+    #else:
+    #    starte = 6.112*np.exp(17.67*startt/(startt+243.12))*100.
+    
+    #startw=MixRatio(starte,startp*100)
+    #startw = epsil*starte/((startp*100.)-starte)
+    ee=Pres*startw/(.622+startw)    
+    T_iso=243.5/(17.67/np.log(ee/6.112)-1.0)
+   
+    
+    # Solve for the intersection of these lines (LCL).
+    # interp requires the x argument (argument 2)
+    # to be ascending in order!
+    P_lcl=interp(0,T_iso-T_dry,Pres)    
+    T_lcl=interp(P_lcl,Pres[::-1],T_dry[::-1])
+
+    presdry=np.linspace(startp,P_lcl)
+    tempdry=interp(presdry,Pres[::-1],T_dry[::-1])
+    tempiso=interp(presdry,Pres[::-1],T_iso[::-1])
+    
+    return presdry*100.,tempdry+273.15,tempiso+273.15, T_lcl+273.15, P_lcl*100.
+
+def moist_ascent(startpp,starttk,ptop=100,nsteps=501):
+    #--------------------------------------------------------------------
+    # Lift a parcel moist adiabatically from startp to endp.
+    # Init temp is startt in Kelvin, pressure levels are in Pa    
+    #--------------------------------------------------------------------
+    
+    startp = startpp/100. # convert to hPa
+    startt = starttk - 273.15 # convert to deg C
+    
+    #preswet=np.linspace(startp,ptop,101) 
+    preswet=logspace(log10(startp),log10(ptop),nsteps)
+    
+    temp=startt
+    tempwet=np.zeros(preswet.shape);tempwet[0]=startt
+    for ii in range(preswet.shape[0]-1):
+        delp=preswet[ii]-preswet[ii+1]
+        temp=temp-100.*delp*GammaW(temp+273.15,(preswet[ii]-delp/2)*100.)
+        tempwet[ii+1]=temp
+
+    return preswet*100.,tempwet+273.15
+
+def thetae(thta, temp, qv):
     ''' Compute equivalent potential temperature '''
     ''' '''
-    ''' thta:   Input potential temperature (K) '''
-    ''' temp:   Input temperature (K) '''
-    ''' esat:   Input saturation vapor pressure (Pa)'''
+    ''' thta:   Input potential temperature of column (K) '''
+    ''' temp:   Input temperature (K) at LCL '''
+    ''' qv:     Input mixing ratio of column (kg kg-1)'''
     ''' thetae: Output equivalent potential temperature (K)'''
-    thout = thta * np.exp( (L * esat) / (Cp * temp) )
+    thout = thta * np.exp( (L * qv) / (Cp * temp) )
     return thout
 
 def w_to_omega(w,pres,tempk):
@@ -231,7 +414,7 @@ def latlon_to_dlatdlon(lats,lons):
     for jj in range(0,nlat):
        for ii in range(0,nlon):
           dlonarr[jj,ii] = dlons[ii]
-	  dlatarr[jj,ii] = dlats[jj]
+          dlatarr[jj,ii] = dlats[jj]
 
 
     return dlatarr, dlonarr
@@ -248,13 +431,13 @@ def gradient_cartesian(f, *varargs):
     ----------
     f : N-dimensional array containing samples of a scalar function.
         If 2-D, must be ordered as f(y,x)
-	If 3-D, must be ordered as f(z,y,x) or f(p,y,x)
+    If 3-D, must be ordered as f(z,y,x) or f(p,y,x)
     `*varargs` : scalars
           0, 1, or N scalars specifying the sample distances in each direction,
           that is: `dz`, `dy`, `dx`, ... The default distance is 1.
 
-	  If a vector is specified as the first argument of three, then the difference
-	     of this vector will be taken here.
+      If a vector is specified as the first argument of three, then the difference
+         of this vector will be taken here.
 
 
     Returns
@@ -289,20 +472,17 @@ def gradient_cartesian(f, *varargs):
 
     if n == 1:
         dy = argsin[0]
-
-	dfdy = df[0]
+        dfdy = df[0]
     elif n == 2:
         dy = argsin[0]
-	dx = argsin[1]
-
-	dfdy = df[0]
+        dx = argsin[1]
+        dfdy = df[0]
         dfdx = df[1]
     elif n == 3:
         levs = argsin[0]
-	dy = argsin[1]
+        dy = argsin[1]
         dx = argsin[2]
-
-	dfdz = df[0]
+        dfdz = df[0]
         dfdy = df[1]
         dfdx = df[2]
     else:
@@ -333,21 +513,21 @@ def gradient_cartesian(f, *varargs):
     else:
        if N == 1:
           ny = np.shape(f)
-	  for jj in range(0,ny):
-	     dyarr[jj,ii] = dy[jj]
+          for jj in range(0,ny):
+              dyarr[jj,ii] = dy[jj]
        elif N == 2:
-	  ny, nx = np.shape(f)
-	  for jj in range(0,ny):
-             for ii in range(0,nx):
-        	dyarr[jj,ii] = dy[jj]
-		dxarr[jj,ii] = dx[ii]
+           ny, nx = np.shape(f)
+           for jj in range(0,ny):
+               for ii in range(0,nx):
+                   dyarr[jj,ii] = dy[jj]
+                   dxarr[jj,ii] = dx[ii]
        else:
-	  nz, ny, nx = np.shape(f)
-	  for kk in range(0,nz):
-             for jj in range(0,ny):
-        	for ii in range(0,nx):
-                   dyarr[kk,jj,ii] = dy[jj]
-		   dxarr[kk,jj,ii] = dx[ii]
+           nz, ny, nx = np.shape(f)
+           for kk in range(0,nz):
+               for jj in range(0,ny):
+                   for ii in range(0,nx):
+                       dyarr[kk,jj,ii] = dy[jj]
+                       dxarr[kk,jj,ii] = dx[ii]
 
     if n==1:
        dfdy = dfdy/dx
@@ -368,20 +548,19 @@ def gradient_cartesian(f, *varargs):
           nzz=0
 
        if nzz>1:
-	    zin = levs
-	    dz = np.zeros_like(zin).astype(otype)
-            dz[1:-1] = (zin[2:] - zin[:-2])/2
-            dz[0] = (zin[1] - zin[0])
-            dz[-1] = (zin[-1] - zin[-2])	    	    	    
-	    if zin[1] < zin[0]:
-	       dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
-	    
-	    dx3 = np.ones_like(f).astype(otype)
-	    for kk in range(0,nz):
-	       dx3[kk,:,:] = dz[kk]
+           zin = levs
+           dz = np.zeros_like(zin).astype(otype)
+           dz[1:-1] = (zin[2:] - zin[:-2])/2
+           dz[0] = (zin[1] - zin[0])
+           dz[-1] = (zin[-1] - zin[-2])                     
+       if zin[1] < zin[0]:
+           dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
+           dx3 = np.ones_like(f).astype(otype)
+           for kk in range(0,nz):
+               dx3[kk,:,:] = dz[kk]
        else:
-            dx3 = np.ones_like(f).astype(otype)
-            dx3[:] = dx[0]
+           dx3 = np.ones_like(f).astype(otype)
+           dx3[:] = dx[0]
 
        dfdz = dfdz/dx3
        return dfdz,dfdy,dfdx
@@ -432,20 +611,17 @@ def gradient_sphere(f, *varargs):
 
     if n == 1:
         lats = argsin[0]
-
-	dfdy = df[0]
+        dfdy = df[0]
     elif n == 2:
         lats = argsin[0]
-	lons = argsin[1]
-
-	dfdy = df[0]
+        lons = argsin[1]
+        dfdy = df[0]
         dfdx = df[1]
     elif n == 3:
         levs = argsin[0]
-	lats = argsin[1]
+        lats = argsin[1]
         lons = argsin[2]
-
-	dfdz = df[0]
+        dfdz = df[0]
         dfdy = df[1]
         dfdx = df[2]
     else:
@@ -469,14 +645,14 @@ def gradient_sphere(f, *varargs):
        for jj in range(0,nlat):
           for ii in range(0,nlon):
              latarr[jj,ii] = lats[jj]
-	     lonarr[jj,ii] = lons[ii]
+             lonarr[jj,ii] = lons[ii]
     else:
        nz, nlat, nlon = np.shape(f)
        for kk in range(0,nz):
           for jj in range(0,nlat):
              for ii in range(0,nlon):
                 latarr[kk,jj,ii] = lats[jj]
-		lonarr[kk,jj,ii] = lons[ii]
+                lonarr[kk,jj,ii] = lons[ii]
 
     latrad = latarr*(pi/180)
 
@@ -504,12 +680,12 @@ def gradient_sphere(f, *varargs):
     if N==2:
        for jj in range(0,nlat):
           for ii in range(0,nlon):
-             dlonarr[jj,ii] = dlons[ii]
+              dlonarr[jj,ii] = dlons[ii]
     elif N==3:
        for kk in range(0,nz):
           for jj in range(0,nlat):
              for ii in range(0,nlon):
-	        dlonarr[kk,jj,ii] = dlons[ii]
+                 dlonarr[kk,jj,ii] = dlons[ii]
 
     dlatsrad = dlatarr*(pi/180)
     dlonsrad = dlonarr*(pi/180)
@@ -540,20 +716,20 @@ def gradient_sphere(f, *varargs):
           nzz=0
 
        if nzz>1:
-	    zin = levs
-	    dz = np.zeros_like(zin).astype(otype)
-            dz[1:-1] = (zin[2:] - zin[:-2])/2
-            dz[0] = (zin[1] - zin[0])
-            dz[-1] = (zin[-1] - zin[-2])
-	    if zin[0,1,1] > zin[1,1,1]:
-	       dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
+           zin = levs
+           dz = np.zeros_like(zin).astype(otype)
+           dz[1:-1] = (zin[2:] - zin[:-2])/2
+           dz[0] = (zin[1] - zin[0])
+           dz[-1] = (zin[-1] - zin[-2])
+           if zin[0,1,1] > zin[1,1,1]:
+               dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
 
-	    dx3 = np.ones_like(f).astype(otype)
-	    for kk in range(0,nz):
-	       dx3[kk,:,:] = dz[kk]
+           dx3 = np.ones_like(f).astype(otype)
+           for kk in range(0,nz):
+               dx3[kk,:,:] = dz[kk]
        else:
-            dx3 = np.ones_like(f).astype(otype)
-            dx3[:] = dx[0]
+           dx3 = np.ones_like(f).astype(otype)
+           dx3[:] = dx[0]
 
        dfdz = dfdz/dx3
        return dfdz,dfdy,dfdx
@@ -607,20 +783,17 @@ def gradient_cendiff_latlon(f, *varargs):
 
     if n == 1:
         lats = argsin[0]
-
-	dfdy = df[0]
+        dfdy = df[0]
     elif n == 2:
         lats = argsin[0]
-	lons = argsin[1]
-
-	dfdy = df[0]
+        lons = argsin[1]
+        dfdy = df[0]
         dfdx = df[1]
     elif n == 3:
         levs = argsin[0]
-	lats = argsin[1]
+        lats = argsin[1]
         lons = argsin[2]
-
-	dfdz = df[0]
+        dfdz = df[0]
         dfdy = df[1]
         dfdx = df[2]
     else:
@@ -644,14 +817,14 @@ def gradient_cendiff_latlon(f, *varargs):
        for jj in range(0,nlat):
           for ii in range(0,nlon):
              latarr[jj,ii] = lats[jj]
-	     lonarr[jj,ii] = lons[ii]
+             lonarr[jj,ii] = lons[ii]
     else:
        nz, nlat, nlon = np.shape(f)
        for kk in range(0,nz):
           for jj in range(0,nlat):
              for ii in range(0,nlon):
                 latarr[kk,jj,ii] = lats[jj]
-		lonarr[kk,jj,ii] = lons[ii]
+                lonarr[kk,jj,ii] = lons[ii]
 
     latrad = latarr*(pi/180)
 
@@ -684,7 +857,7 @@ def gradient_cendiff_latlon(f, *varargs):
        for kk in range(0,nz):
           for jj in range(0,nlat):
              for ii in range(0,nlon):
-	        dlonarr[kk,jj,ii] = dlons[ii]
+                 dlonarr[kk,jj,ii] = dlons[ii]
 
     dlatsrad = dlatarr*(pi/180)
     dlonsrad = dlonarr*(pi/180)
@@ -715,20 +888,20 @@ def gradient_cendiff_latlon(f, *varargs):
           nzz=0
 
        if nzz>1:
-	    zin = levs
-	    dz = np.zeros_like(zin).astype(otype)
-            dz[1:-1] = (zin[2:] - zin[:-2])/2
-            dz[0] = (zin[1] - zin[0])
-            dz[-1] = (zin[-1] - zin[-2])
-	    if zin[0,1,1] > zin[1,1,1]:
-	       dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
+           zin = levs
+           dz = np.zeros_like(zin).astype(otype)
+           dz[1:-1] = (zin[2:] - zin[:-2])/2
+           dz[0] = (zin[1] - zin[0])
+           dz[-1] = (zin[-1] - zin[-2])
+           if zin[0,1,1] > zin[1,1,1]:
+               dz = dz*-1 # assume the model top is the first index and the lowest model is the last index
 
-	    dx3 = np.ones_like(f).astype(otype)
-	    for kk in range(0,nz):
-	       dx3[kk,:,:] = dz[kk]
+           dx3 = np.ones_like(f).astype(otype)
+           for kk in range(0,nz):
+               dx3[kk,:,:] = dz[kk]
        else:
-            dx3 = np.ones_like(f).astype(otype)
-            dx3[:] = dx[0]
+           dx3 = np.ones_like(f).astype(otype)
+           dx3[:] = dx[0]
 
        dfdz = dfdz/dx3
        return dfdz,dfdy,dfdx
@@ -803,8 +976,8 @@ Input:
    u(lats,lons), v(lats,lons) : 2 dimensional u and v wind arrays 
                              dimensioned by (lats,lons).
                              Arrays correspond to the x and y 
-			     components of the wind, respectively.
-			     
+                 components of the wind, respectively.
+                 
    ghgt(lats,lons): 2 dimensional array of geopotential height
    
    lats(lats) : latitude vector
@@ -815,14 +988,14 @@ Output:
    ug(lats,lons), vg(lats,lons): 2 dimensional geostrophic u and v 
                              wind arrays dimensioned by (lats,lons).
                              Arrays correspond to the x and y 
-			     components of the geostrophic wind, 
-			     respectively.
+                 components of the geostrophic wind, 
+                 respectively.
 '''
     # 2D latitude array
     glats = np.zeros_like(u).astype('f')      
     for jj in range(0,len(lats)):
-	for ii in range(0,len(lons)):    
-	   glats[jj,ii] = lats[jj]
+        for ii in range(0,len(lons)):    
+            glats[jj,ii] = lats[jj]
 
     # Coriolis parameter
     f = 2*(7.292e-05)*np.sin(np.deg2rad(glats))    
@@ -845,8 +1018,8 @@ Input:
    
    u,v : 2 dimensional u and v wind arrays 
          corresponding to the x and y 
-	 components of the wind, respectively.
-			     
+     components of the wind, respectively.
+                 
    ghgt: 2 dimensional array of geopotential height
    
    lats : latitude array
@@ -855,7 +1028,7 @@ Output:
 
    ug,vg : 2 dimensional geostrophic u and v 
            wind arrays corresponding to the x and y 
-	   components of the geostrophic wind, respectively.
+       components of the geostrophic wind, respectively.
 '''
 
     # Coriolis parameter
@@ -877,14 +1050,14 @@ Input:
    datain(y,x)    : 2 dimensional array to compute advection of
    u(y,x), v(y,x) : 2 dimensional u and v wind arrays                                 
                     Arrays correspond to the x and y 
-		    components of the wind, respectively.
+            components of the wind, respectively.
    deltax     : horizontal x grid spacing in meters
    deltay     : horiztional y grid spacing in meters
 
 Output: 
 
    dataout(y,x): Two dimensional array with the horizontal
-   	 	 advection of datain
+         advection of datain
 '''
     sh = np.shape(datain)
     n = len(sh)
@@ -909,7 +1082,7 @@ Input:
    u(lats,lons), v(lats,lons) : 2 dimensional u and v wind arrays 
                              dimensioned by (lats,lons).
                              Arrays correspond to the x and y 
-			     components of the wind, respectively.
+                 components of the wind, respectively.
 
    lats(lats) : latitude vector
    lons(lons) : longitude array
@@ -931,7 +1104,7 @@ Input:
    u(lats,lons), v(lats,lons) : 2 dimensional u and v wind arrays 
                                 dimensioned by (lats,lons).
                                 Arrays correspond to the x and y 
-		   	        components of the wind, respectively.
+                    components of the wind, respectively.
 
    lats(lats) : latitude vector
    lons(lons) : longitude array
@@ -950,8 +1123,8 @@ Output:
        # 2D latitude array
        glats = np.zeros_like(u).astype('f')      
        for jj in range(0,len(lats)):
-	   for ii in range(0,len(lons)):    
-	      glats[jj,ii] = lats[jj]
+           for ii in range(0,len(lons)):    
+               glats[jj,ii] = lats[jj]
 
        # Coriolis parameter
        f = 2*(7.292e-05)*np.sin(np.deg2rad(glats))    
@@ -971,7 +1144,7 @@ Calculate the vertical vorticity on a Cartesian grid
 Input:
    u(y,x), v(y,x) : 2 dimensional u and v wind arrays                                 
                     Arrays correspond to the x and y 
-		    components of the wind, respectively.
+            components of the wind, respectively.
 
    lats(lats) : 2D latitude array
    deltax     : horizontal x grid spacing in meters
@@ -1021,7 +1194,7 @@ def thermal_wind_cartesian(thickness_in, lats, deltax, deltay):
         dthickdy,dthickdx = gradient_cartesian(thickness_in, deltay, deltax)
     else:         
         dthickdz,dthickdy,dthickdx = gradient_cartesian(thickness_in, thickness_in[:,0,0], deltay, deltax)    
-	
+    
     #Calculate the Coriolis parameter
 
     f = 2*(7.292e-05)*np.sin(np.deg2rad(lats)) 
@@ -1048,7 +1221,7 @@ Output:
 
    thermal_wind_u(lats,lons), thermal_wind_v(lats,lons): Two dimensional arrays of 
                                                          u- and v- components of 
-							 thermal wind vector
+                             thermal wind vector
 '''
     
     # Smooth the thicknesses
@@ -1060,8 +1233,8 @@ Output:
     # 2D latitude array
     glats = np.zeros_like(thickness_in).astype('f')      
     for jj in range(0,len(lats)):
-	for ii in range(0,len(lons)):    
-	   glats[jj,ii] = lats[jj]
+        for ii in range(0,len(lons)):    
+            glats[jj,ii] = lats[jj]
 
     # Coriolis parameter
     f = 2*(7.292e-05)*np.sin(np.deg2rad(glats))    
@@ -1072,7 +1245,7 @@ Output:
 
     return thermal_wind_u, thermal_wind_v
 
-def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs):
+def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs,normalize_option):
     """
 
    Computes the 3-D Eliassen-Palm flux vectors and divergence on a 
@@ -1086,6 +1259,7 @@ def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs):
        theta:     3D potential temperature (K)
        lats,lons: 1D latitude and longitude vectors
        levs:      1D pressure vector (Pa)
+       normalize_option: 0 = no normalizing, 1 = normalize by maximum value at each vertical level, 2 = standardize 
 
    Output:      
       Fx, Fy, Fz: Eliassen-Palm flux x, y, z vector components
@@ -1113,20 +1287,20 @@ def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs):
     farr = np.zeros_like(geop).astype('f')    
     for kk in range(0,iz):
         for jj in range(0,iy):            
-	    latarr[kk,jj,:] = lats[jj]
-	    farr[kk,jj,:] = 2*omeg_e*np.sin(lats[jj]*(np.pi/180))
-	      
+            latarr[kk,jj,:] = lats[jj]
+            farr[kk,jj,:] = 2.0*omeg_e*np.sin(lats[jj]*(np.pi/180.0))
+          
     psi = geop / farr     
     psi_anom, psi_anom_std = spatial_anomaly(psi,1) 
         
     pres = np.zeros_like(theta_anom).astype('f')   
     for kk in range(0,iz):      
-       pres[kk,:,:] = levs[kk]
+        pres[kk,:,:] = levs[kk]
     
-    coef = pres*np.cos(latarr*(np.pi/180))    
-    arg1 = coef/( 2*np.pi*(R_earth**2)*np.cos(latarr*(np.pi/180))*np.cos(latarr*(np.pi/180)) )
-    arg2 = coef/( 2*np.pi*(R_earth**2)*np.cos(latarr*(np.pi/180)) )
-    arg3 = coef*(2*(omeg_e**2)*np.sin(latarr*(np.pi/180))*np.sin(latarr*(np.pi/180)))
+    coef = pres*np.cos(latarr*(np.pi/180.0))    
+    arg1 = coef/( 2.0*np.pi*(R_earth**2)*np.cos(latarr*(np.pi/180.0))*np.cos(latarr*(np.pi/180.0)) )
+    arg2 = coef/( 2.0*np.pi*(R_earth**2)*np.cos(latarr*(np.pi/180.0)) )
+    arg3 = coef*(2.0*(omeg_e**2)*np.sin(latarr*(np.pi/180.0))*np.sin(latarr*(np.pi/180.0)))
    
     dthdz, yy, xx = gradient_cendiff_latlon(theta, geop/g, lats, lons) 
     xx, dthdy, dthdx = gradient_cendiff_latlon(theta_anom, geop/g, lats, lons)        
@@ -1135,9 +1309,9 @@ def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs):
     aaa, d2psidxdz, ccc = gradient_cendiff_latlon(dpsidz, geop/g, lats, lons) 
 
     N2 = (g/theta)*(dthdz)
-    arg4 = arg3/(N2*R_earth*np.cos(latarr*(np.pi/180)))        
+    arg4 = arg3/(N2*R_earth*np.cos(latarr*(np.pi/180.0)))        
     
-    Fx = arg1*( dpsidx**2      - (psi_anom*d2psidx2))
+    Fx = arg1*( dpsidx**2.0      - (psi_anom*d2psidx2))
     Fy = arg2*((dpsidy*dpsidx) - (psi_anom*d2psidxdy))
     Fz = arg4*((dpsidx*dpsidz) - (psi_anom*d2psidxdz))          
     
@@ -1147,6 +1321,17 @@ def eliassen_palm_flux_sphere(geop,theta,lats,lons,levs):
        
     divF = Fx_x + Fy_y + Fz_z
     
+    if normalize_option == 1:        
+        for kk in range(0,iz):  
+	    Fx[kk,:,:] =  Fx[kk,:,:] / np.nanmax(np.abs(Fx[kk,:,:]))
+	    Fy[kk,:,:] =  Fy[kk,:,:] / np.nanmax(np.abs(Fy[kk,:,:]))
+	    Fz[kk,:,:] =  Fz[kk,:,:] / np.nanmax(np.abs(Fz[kk,:,:]))
+    if normalize_option == 2:        
+        for kk in range(0,iz):  
+	    Fx[kk,:,:] =  Fx[kk,:,:] / np.nanstd(Fx[kk,:,:])
+	    Fy[kk,:,:] =  Fy[kk,:,:] / np.nanstd(Fy[kk,:,:])
+	    Fz[kk,:,:] =  Fz[kk,:,:] / np.nanstd(Fz[kk,:,:])    
+
     return Fx, Fy, Fz, divF
 
 
@@ -1181,7 +1366,7 @@ def epv_sphere(theta,pres,u,v,lats,lons):
 
     avort = np.zeros_like(theta).astype('f')   
     for kk in range(0,iz):       
-       avort[kk,:,:] = vertical_vorticity_latlon(u[kk,:,:].squeeze(), v[kk,:,:].squeeze(), lats, lons, 1)
+        avort[kk,:,:] = vertical_vorticity_latlon(u[kk,:,:].squeeze(), v[kk,:,:].squeeze(), lats, lons, 1)
 
     epv = (-9.81*(-dvdp*dthdx - dudp*dthdy + avort*dthdp))*10**6
 
@@ -1219,7 +1404,7 @@ def epv_cartesian(theta,pres,u,v,lats,deltax,deltay):
 
     avort = np.zeros_like(theta).astype('f')   
     for kk in range(0,iz):       
-       avort[kk,:,:] = vertical_vorticity_cartesian(u[kk,:,:].squeeze(), v[kk,:,:].squeeze(), lats, deltax, deltay, 1)
+        avort[kk,:,:] = vertical_vorticity_cartesian(u[kk,:,:].squeeze(), v[kk,:,:].squeeze(), lats, deltax, deltay, 1)
 
     epv = (-9.81*(-dvdp*dthdx - dudp*dthdy + avort*dthdp))*10**6
 
@@ -1254,22 +1439,22 @@ def interp2pv(pv, fval, pv_surf):
        for ii in range(ix):  
 
            aa = np.ravel(pv[:,jj,ii]>pv_surf)
-	   pvcol = pv[:,jj,ii].squeeze()
-	   minpv = np.min(pvcol)
+           pvcol = pv[:,jj,ii].squeeze() 
+           minpv = np.min(pvcol)
 
            if ( minpv >= pv_surf ):
-	      # If there are no PV values in the column less than what is desired to interpolate onto, then use value closest to the surface
-              trop[jj,ii] = fval[-1,jj,ii]
+               # If there are no PV values in the column less than what is desired to interpolate onto, then use value closest to the surface
+               trop[jj,ii] = fval[-1,jj,ii]
            elif ( pv[0,jj,ii] <= pv_surf ):
-	      # If PV at the model top is less than what is desired to interpolate onto, then use the value at the top of the model
-              trop[jj,ii] = fval[0,jj,ii]
+               # If PV at the model top is less than what is desired to interpolate onto, then use the value at the top of the model
+               trop[jj,ii] = fval[0,jj,ii]
            else:               
-	       for kk in range(1,iz):      
-	          # linearly interpolate between the closest levels
-	          if pv[kk,jj,ii] < pv_surf:
-                      m = (fval[kk-1,jj,ii] - fval[kk,jj,ii]) / (pv[kk-1,jj,ii] - pv[kk,jj,ii])
-                      trop[jj,ii] = m * (pv_surf - pv[kk,jj,ii]) + fval[kk,jj,ii]
-                      break
+               for kk in range(1,iz):      
+                   # linearly interpolate between the closest levels
+                   if pv[kk,jj,ii] < pv_surf:
+                       m = (fval[kk-1,jj,ii] - fval[kk,jj,ii]) / (pv[kk-1,jj,ii] - pv[kk,jj,ii])
+                       trop[jj,ii] = m * (pv_surf - pv[kk,jj,ii]) + fval[kk,jj,ii]
+                       break
 
 
     return trop
@@ -1305,19 +1490,19 @@ def spatial_anomaly(varin,slice_option):
     
     if slice_option == 1:
         var_mean = np.mean(mvar,2)
-	var_std = np.std(mvar,2)
-	for kk in range(0,iz): 
+        var_std = np.std(mvar,2)
+        for kk in range(0,iz): 
             for jj in range(0,iy):     
-        	tmp[kk,jj,:] = varin[kk,jj,:] - var_mean[kk,jj]    
-        	tmp_std[kk,jj,:] = var_std[kk,jj]
+                tmp[kk,jj,:] = varin[kk,jj,:] - var_mean[kk,jj]    
+                tmp_std[kk,jj,:] = var_std[kk,jj]
     else:
         var_mean = np.mean(mvar,1)
-	var_std = np.std(mvar,1)
-	for kk in range(0,iz): 
+        var_std = np.std(mvar,1)
+        for kk in range(0,iz): 
             for ii in range(0,ix):     
-        	tmp[kk,:,ii] = varin[kk,:,ii] - var_mean[kk,ii]    
-        	tmp_std[kk,:,ii] = var_std[kk,ii]    
-    	    
+                tmp[kk,:,ii] = varin[kk,:,ii] - var_mean[kk,ii]    
+                tmp_std[kk,:,ii] = var_std[kk,ii]    
+            
     varanom = tmp
     varanom_std = tmp/tmp_std
     
@@ -1364,7 +1549,7 @@ def find_amplitude(datain,dataininds,thresh,min_or_max):
     if min_or_max == 'min':
         mininds=np.where(datain==np.min(datain[dataininds]))   
     else:
-        mininds=np.where(datain==np.max(datain[dataininds]))       	
+        mininds=np.where(datain==np.max(datain[dataininds]))        
     mininds2 = np.ma.getdata(mininds)    
     
     minval = datasave[mininds2[0],mininds2[1]]       
@@ -1376,78 +1561,78 @@ def find_amplitude(datain,dataininds,thresh,min_or_max):
     minsearch = np.min(mininds2)       
     amps = np.zeros(8)
     for ii in range(0,8):
-       for jj in range(minsearch-1,0,-1):
-	   # Search up
-	   if ii==0:
-	      try:
-		 if datain[jj-1,mininds2[1]] < datain[jj,mininds2[1]]:		    
-		    amps[ii] = datasave[jj,mininds2[1]] - minval
-	            break
-	      except:
-	         continue
-		     	    
-	   # Search NE
-	   if ii==1:
-	      try:	     
-		 if datain[jj-1,jj+1] < datain[jj,jj]:		    
-		    amps[ii] = datasave[jj,jj] - minval
-	            break	
-	      except:
-	         continue
+        for jj in range(minsearch-1,0,-1):
+        # Search up
+            if ii==0:
+                try:
+                    if datain[jj-1,mininds2[1]] < datain[jj,mininds2[1]]:           
+                        amps[ii] = datasave[jj,mininds2[1]] - minval
+                        break
+                except:
+                    continue
+                    
+        # Search NE
+            if ii==1:
+                try:         
+                    if datain[jj-1,jj+1] < datain[jj,jj]:           
+                        amps[ii] = datasave[jj,jj] - minval
+                        break   
+                except:
+                    continue
 
-	   # Search right
-	   if ii==2:
-	      try:	     
-		 if datain[mininds2[0],jj+1] < datain[mininds2[0],jj]:		    
-		    amps[ii] = datasave[mininds2[0],jj] - minval
-	            break	      	      
-	      except:
-	         continue
+        # Search right
+            if ii==2:
+                try:         
+                    if datain[mininds2[0],jj+1] < datain[mininds2[0],jj]:           
+                        amps[ii] = datasave[mininds2[0],jj] - minval
+                        break                 
+                except:
+                    continue
 
-	   # Search SE
-	   if ii==3:
-	      try:	     
-		 if datain[jj+1,jj+1] < datain[jj,jj]:		    
-		    amps[ii] = datasave[jj,jj] - minval
-	            break			     
-	      except:
-	         continue
-		 
-	   # Search down
-	   if ii==4:
-	      try:	     
-		 if datain[jj+1,mininds2[1]] < datain[jj,mininds2[1]]:		    
-		    amps[ii] = datasave[jj,mininds2[1]] - minval
-	            break	      
-	      except:
-	         continue
+       # Search SE
+            if ii==3:
+                try:         
+                    if datain[jj+1,jj+1] < datain[jj,jj]:           
+                        amps[ii] = datasave[jj,jj] - minval
+                        break                
+                except:
+                    continue
+         
+       # Search down
+            if ii==4:
+                try:         
+                    if datain[jj+1,mininds2[1]] < datain[jj,mininds2[1]]:           
+                        amps[ii] = datasave[jj,mininds2[1]] - minval
+                        break         
+                except:
+                    continue
 
-	   # Search SW
-	   if ii==5:
-	      try:	     
-		 if datain[jj+1,jj-1] < datain[jj,jj]:		    
-		    amps[ii] = datasave[jj,jj] - minval
-	            break		      
-	      except:
-	         continue
-		 
-	   # Search left
-	   if ii==6:
-	      try:	     
-		 if datain[mininds2[0],jj-1] < datain[mininds2[0],jj]:		    
-		    amps[ii] = datasave[mininds2[0],jj] - minval
-	            break	      
-	      except:
-	         continue
+       # Search SW
+            if ii==5:
+                try:         
+                    if datain[jj+1,jj-1] < datain[jj,jj]:           
+                        amps[ii] = datasave[jj,jj] - minval
+                        break             
+                except:
+                    continue
+         
+       # Search left
+            if ii==6:
+                try:         
+                    if datain[mininds2[0],jj-1] < datain[mininds2[0],jj]:           
+                        amps[ii] = datasave[mininds2[0],jj] - minval
+                        break         
+                except:
+                    continue
 
-	   # Search NW
-	   if ii==7:
-	      try:	    	     
-		 if datain[jj-1,jj-1] < datain[jj,jj]:		    
-		    amps[ii] = datasave[jj,jj] - minval
-	            break		      
-	      except:
-	         continue
+       # Search NW
+            if ii==7:
+                try:                 
+                    if datain[jj-1,jj-1] < datain[jj,jj]:           
+                        amps[ii] = datasave[jj,jj] - minval
+                        break             
+                except:
+                    continue
 
 
     try:
@@ -1502,34 +1687,81 @@ def readsounding(fname):
     # First line for WRF profiles differs from the UWYO soundings
     header=lines[0]
     if header[:5]=='00000':
-	# WRF profile
-	data['StationNumber']='-99999'
-	data['Longitude']=float(header.split()[5].strip(","))
-	data['Latitude']=float(header.split()[6])
-	data['SoundingDate']=header.split()[-1]
+        # WRF profile
+        data['StationNumber']='-99999'
+        data['Longitude']=float(header.split()[5].strip(","))
+        data['Latitude']=float(header.split()[6])
+        data['SoundingDate']=header.split()[-1]
     else:
-	data['StationNumber']=header[:5]
-	dstr=(' ').join(header.split()[-4:])
-	data['SoundingDate']=datetime.datetime.strptime(dstr,"%HZ %d %b %Y").strftime("%Y-%m-%d_%H:%M:%S")
+        data['StationNumber']=header[:5]
+        dstr=(' ').join(header.split()[-4:])
+        data['SoundingDate']=datetime.datetime.strptime(dstr,"%HZ %d %b %Y").strftime("%Y-%m-%d_%H:%M:%S")
     for ff in fields:
-	output[ff.lower()]=np.zeros((nlines-34))-999.
+        output[ff.lower()]=np.zeros((nlines-34))-999.
     lhi=[1, 9,16,23,30,37,46,53,58,65,72]
     rhi=[7,14,21,28,35,42,49,56,63,70,77]
     lcounter=5
     for line,idx in zip(lines[6:],range(ndata)):
-	lcounter+=1
-	try: output[fields[0].lower()][idx]=float(line[lhi[0]:rhi[0]])
-	except ValueError: break
-	for ii in range(1,len(rhi)):
-	    try:
-	        # Debug only:
-	        # print fields[ii].lower(), float(line[lhi[ii]:rhi[ii]].strip())
-	        output[fields[ii].lower()][idx]=float(line[lhi[ii]:rhi[ii]].strip())
-	    except ValueError:
-	        pass
+        lcounter+=1
+        try: output[fields[0].lower()][idx]=float(line[lhi[0]:rhi[0]])
+        except ValueError: break
+        for ii in range(1,len(rhi)):
+            try:
+                # Debug only:
+                # print fields[ii].lower(), float(line[lhi[ii]:rhi[ii]].strip())
+                output[fields[ii].lower()][idx]=float(line[lhi[ii]:rhi[ii]].strip())
+            except ValueError:
+                pass
     for field in fields:        
         ff=field.lower()
         data[ff]=np.ma.masked_values(output[ff],-999.)
-	fieldnames[ff] = field
+        fieldnames[ff] = field
     
     return data, fieldnames
+
+def mean_confidence_interval(data, confidence=0.95):
+    a = 1.0*np.array(data)
+    n = len(a)
+    m, se = np.mean(a), scipy.stats.sem(a)
+    h = se * sp.stats.t.ppf((1+confidence)/2., n-1)
+    return h, m-h, m+h
+    
+
+def bootstrap(data,boot_num):
+    data = 1.0*np.array(data)
+    n = len(data)
+    boot_means = np.empty([boot_num])
+    for i in np.arange(0,boot_num,1):
+        current_boot = np.random.choice(data,n)
+        boot_means[i] = np.mean(current_boot)
+    return boot_means
+
+def bootstrap_twosamps(data1,data2,boot_num,alpha):
+    import numpy.matlib
+    data1vec = np.reshape(data1, np.prod(np.size(data1)), 1)
+    data2vec = np.reshape(data2, np.prod(np.size(data2)), 1)
+       
+    # N(datamean,var):
+    data1mean = np.nanmean(data1vec)
+    data1std = np.nanstd(data1vec)
+    data2mean = np.nanmean(data2vec)
+    data2std = np.nanstd(data2vec)
+        
+    n = len(data1vec)
+    boot_means = np.empty([boot_num])
+    for i in np.arange(0,boot_num,1):
+        boot1 = data1std*np.matlib.randn((n)) + data1mean
+	boot2 = data2std*np.matlib.randn((n)) + data2mean
+        boot_means[i] = np.nanmean(boot1) - np.nanmean(boot2)
+    
+    ci_limits = [100.0*alpha/2.0,100.0*(1.0-alpha/2.0)]
+    
+    ci_upper = np.percentile(boot_means,ci_limits[0])
+    ci_lower = np.percentile(boot_means,ci_limits[1])
+    if ci_upper > ci_lower:
+        ci_limits_out = [ci_lower,ci_upper]    
+    else:
+        ci_limits_out = [ci_upper,ci_lower]  
+    return boot_means,ci_limits_out
+
+    

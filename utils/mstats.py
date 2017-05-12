@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/home/scavallo/anaconda2/bin/python
 
 import numpy as np
 

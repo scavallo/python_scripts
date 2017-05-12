@@ -1,10 +1,12 @@
-#!/usr/bin/python
+#!/home/scavallo/anaconda2/bin/python
 
 import numpy as np
 #import matplotlib.pyplot as mpl
 import matplotlib as plt
 from mpl_toolkits.basemap import Basemap, addcyclic 
 import math
+
+from mstats import *
 
 def nan2zero(data):
     ''' Convert NaNs to zero '''
@@ -325,6 +327,7 @@ def earth_distm(lat1,lon1,lat2,lon2):
     latsize = np.size(lat2)
     ndims = len(latshape)
     
+    
     R_earth = 6371200
     R_earth = R_earth / 1000
     pid = np.pi/180
@@ -340,7 +343,7 @@ def earth_distm(lat1,lon1,lat2,lon2):
     else:
 
 	if latsize > 1:
-	   [iy,ix] = np.shape(lat2)
+	   [iy,ix] = np.shape(lat2)	   
 
 	   X = np.zeros_like(lat2).astype('f')   
 	   Y = np.zeros_like(lon2).astype('f')   
@@ -352,10 +355,12 @@ def earth_distm(lat1,lon1,lat2,lon2):
 	   X = lon1
 	   Y = lat1   
     	            
+
     # calculate distance
     ed = R_earth * np.arccos( np.sin(Y*pid) * np.sin(lat2*pid) + np.cos(Y*pid) * np.cos(lat2*pid) * np.cos((lon2 - X)*pid));
 
     return ed
+
 
 def destagger_hor_wind(ustag,vstag):
    """
@@ -414,6 +419,7 @@ def destagger_vertical(varin):
    
    nshape = np.shape(varin)
    nel = len(nshape)   
+   
    if nel == 4:
       Nt,Nz,Ny,Nx = np.shape(varin)         
       
@@ -488,6 +494,32 @@ def grid_to_true_wind(lon,ug,vg,truelat1,truelat2,stdlon,proj_type):
 
     return ut,vt
 
+def autocorr(datain,endlag):
+    '''
+    autocorr(datain,endlag)
+    
+    Input: 
+         datain[0:N] is a data time series of size N
+	 endlag is the number of time steps to find autocorrelation
+    Output:
+    	 aut[0:endlag] is the autocorrelation of datain from lag 0 to time step endlag	 
+    
+    Steven Cavallo
+    University of Oklahoma
+    July 2016
+    '''
+    
+    N = np.size(datain)
+    aut = []
+    for lag in range(0,endlag):
+        data1 = datain[0:N-lag]
+	data1m = data1 - np.nanmean(data1)
+	data2 = datain[lag:]
+	data2m = data2 - np.nanmean(data2)
+	aut.append(np.sum(data1m*data2m)/np.sqrt(np.sum(data1m**2.0)*np.sum(data2m**2.0)))
+
+    return aut
+    
 def xsection_inds(slon, slat, elon, elat, lons, lats, m):
     '''
     Returns the indicies for creating a cross section.
@@ -933,4 +965,65 @@ def smooth_onedim(x,npasses):
 	x = data
     
     return data
+
+def date_to_jd(year,month,day):
+    """
+    Convert a date to Julian Day.
     
+    Algorithm from 'Practical Astronomy with your Calculator or Spreadsheet', 
+        4th ed., Duffet-Smith and Zwart, 2011.
+    
+    Parameters
+    ----------
+    year : int
+        Year as integer. Years preceding 1 A.D. should be 0 or negative.
+        The year before 1 A.D. is 0, 10 B.C. is year -9.
+        
+    month : int
+        Month as integer, Jan = 1, Feb. = 2, etc.
+    
+    day : float
+        Day, may contain fractional part.
+    
+    Returns
+    -------
+    jd : float
+        Julian Day
+        
+    Examples
+    --------
+    Convert 6 a.m., February 17, 1985 to Julian Day
+    
+    >>> date_to_jd(1985,2,17.25)
+    2446113.75
+    
+    """
+    if ( (month == 1) or (month == 2) ):
+        yearp = year - 1
+        monthp = month + 12
+    else:
+        yearp = year
+        monthp = month
+    
+    # this checks where we are in relation to October 15, 1582, the beginning
+    # of the Gregorian calendar.
+    if ((year < 1582) or
+        (year == 1582 and month < 10) or
+        (year == 1582 and month == 10 and day < 15)):
+        # before start of Gregorian calendar
+        B = 0
+    else:
+        # after start of Gregorian calendar
+        A = math.trunc(yearp / 100.)
+        B = 2 - A + math.trunc(A / 4.)
+        
+    if yearp < 0:
+        C = math.trunc((365.25 * yearp) - 0.75)
+    else:
+        C = math.trunc(365.25 * yearp)
+        
+    D = math.trunc(30.6001 * (monthp + 1))
+    
+    jd = B + C + D + day + 1720994.5
+    
+    return jd    
